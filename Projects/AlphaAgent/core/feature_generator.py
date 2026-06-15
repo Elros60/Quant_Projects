@@ -4,7 +4,17 @@ import pandas as pd
 This file contains the feature generation functions.
 '''
 class FeatureGenerator:
-
+    '''
+    This class is responsible for generating features from the input data.
+    It takes a DataFrame as input and returns a DataFrame with the generated features.
+    The features generated include:
+    - Momentum features: ret_3, ret_5, ret_10, ret_15, ret_20
+    - Exponential Moving Average (EMA) features: ema_3, ema_5, ema_10, ema_15, ema_20
+    - Moving average 20 days feature: price_ma20_ratio
+    - Volatility features: vol_20, vol_60, vol_120
+    - Volume features: volume_ratio_20, volume_zscore_20, volume_ratio_60, volume_zscore_60, volume_ratio_120
+    - Target variable: target (1 if ret_1 > 0, 0 otherwise)
+    '''
     def __init__(self, momentum_periods=[3,5,10,15,20], vol_periods=[20,60,120]):
         self.momentum_periods = momentum_periods
         self.vol_periods = vol_periods

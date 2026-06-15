@@ -17,7 +17,9 @@ import yfinance as yf
 import shap
 
 import core.data_loader as data_loader
+import core.feature_evaluator as feature_evaluator
 from core.feature_generator import FeatureGenerator
+
 '''
 This is the main file of the project AlphaAgent, which will serve as a toy-model for a multi-layer construction of alpha signal search engine.
 The main idea contains the following layers:
@@ -31,43 +33,23 @@ The main idea contains the following layers:
 
 def main():
     #### Load input data, specifically the S&P 500 index data from Yahoo Finance
+
     # S&P 500 data will be less noisy than individual stock data, and will provide a good benchmark for the toy model as starting point.
     # ETFs like SPY or VOO can also be used as alternatives to the S&P 500 index data.
     # For alternative data sources, consider using Quandl or Alpha Vantage APIs, which provide a wide range of financial data.
     data = data_loader.load_yahoo_data('SPY', start='2000-01-01', end='2004-01-01')
     data.columns = ['Close', 'High', 'Low', 'Open', 'Volume']
+
+    # Generate features using the FeatureGenerator class
     feature_generator = FeatureGenerator()
     data = feature_generator.generate(data)
+
+    # Save the processed data to a CSV file for further analysis and modeling
     data.to_csv('data/processed_data.csv', index=True)
 
-    # IC (Spearman) check for features
-    features = data.columns.drop(['Close', 'High', 'Low', 'Open', 'Volume', 'target'])
     # Rolling IC calculation
-    window = 252  # 1 year of trading days
-    IC_stats = []
-    for feature in features:
-        # Rolling IC
-        rolling_ic = data[feature].rolling(window).corr(data['ret_1'].shift(-1))
-        plt.figure(figsize=(12, 4))
-        rolling_ic.plot()
-        plt.title(f'Rolling IC for features (window={window})')
-        plt.ylabel('IC (Pearson Correlation)')
-        plt.xlabel('Date')
-        plt.grid(True)
-        plt.savefig(f'data/rollingIC/rolling_ic_{feature}.png')
-        plt.close()  # Close the plot to free up memory
-
-        # Summary stats
-        IC_stats.append({
-            "feature": feature,
-            "mean_ic": rolling_ic.mean(),
-            "std_ic": rolling_ic.std(),
-            "min_ic": rolling_ic.min(),
-            "max_ic": rolling_ic.max()
-        })
-        
-    IC_stats_df = pd.DataFrame(IC_stats)
-    IC_stats_df.to_csv("data/feature_ic_stats.csv", index=False)
+    features = data.columns.drop(['Close', 'High', 'Low', 'Open', 'Volume', 'target'])
+    feature_evaluator.plot_rolling_ic(data, features)  # Call the revised function
         
 
 if __name__ == '__main__':
