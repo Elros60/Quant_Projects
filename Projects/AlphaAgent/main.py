@@ -37,7 +37,7 @@ def main():
     data.columns = ['Close', 'High', 'Low', 'Open', 'Volume']
     feature_generator = FeatureGenerator()
     data = feature_generator.generate(data)
-    # data.to_csv('data/processed_data.csv', index=True)
+    data.to_csv('data/processed_data.csv', index=True)
 
     # IC (Spearman) check for features
     features = data.columns.drop(['target'])
