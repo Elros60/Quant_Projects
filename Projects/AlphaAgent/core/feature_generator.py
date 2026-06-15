@@ -11,7 +11,6 @@ class FeatureGenerator:
 
         df = df.copy()
         df["ret_1"] = np.log(df["Close"]).diff()
-        df["target"] = (df["ret_1"].shift(-1) > 0).astype(int)
 
         for i in [3,5,10,15,20]:
 
@@ -53,4 +52,6 @@ class FeatureGenerator:
                 (df["Volume"] - mean) / std
             )
 
+        df["target"] = (df["ret_1"].shift(-1) > 0).astype(int)
+        
         return df
