@@ -49,7 +49,7 @@ def main():
 
     # Rolling IC calculation
     features = data.columns.drop(['Close', 'High', 'Low', 'Open', 'Volume', 'target'])
-    feature_evaluator.plot_rolling_ic(data, features)  # Call the revised function
+    feature_evaluator.evaluate_rolling_ic_tstat(data, features)  # Call the revised function
         
 
 if __name__ == '__main__':
