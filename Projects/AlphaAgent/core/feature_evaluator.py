@@ -1,17 +1,134 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import seaborn as sns
+
 
 def calculate_rolling_tstat(rolling_ic, window):
     """
     Calculates the t-statistic for rolling IC values.
-    
+
     t = r * sqrt(n-2) / sqrt(1 - r^2)
     """
     t_stat = rolling_ic * np.sqrt(window - 2) / np.sqrt(1 - rolling_ic**2)
     return t_stat
 
-def evaluate_rolling_ic_tstat(data, features, window=252, plot=False):
+
+def momentum_regime(
+    data, feature_rank, target, horizon=1, window_short=50, window_long=200
+):
+    """
+    Determines the momentum regime based on moving averages.
+
+    Parameters:
+    - data: DataFrame containing the 'ret_1' column.
+    - feature_rank: Ranked feature values.
+    - target: Target variable.
+    - horizon: The horizon for the target variable (default is 1).
+    - window_short: The short-term moving average window (default is 50).
+    - window_long: The long-term moving average window (default is 200).
+
+    Returns:
+    - low_momentum: Boolean Series indicating low momentum regime.
+    - high_momentum: Boolean Series indicating high momentum regime.
+    """
+    ma_short = data[f"ret_{horizon}"].rolling(window_short).mean()
+    ma_long = data[f"ret_{horizon}"].rolling(window_long).mean()
+    threshold = ma_short - ma_long
+    low_momentum = threshold <= 0
+    high_momentum = threshold > 0
+
+    # Momentum regime ICs
+    ic_low_momentum = feature_rank[low_momentum].corr(target[low_momentum])
+    ic_high_momentum = feature_rank[high_momentum].corr(target[high_momentum])
+
+    return ic_low_momentum, ic_high_momentum
+
+
+def volatility_regime(data, feature_rank, target, horizon=1, window=63):
+    """
+    Determines the volatility regime based on realized volatility.
+
+    Parameters:
+    - data: DataFrame containing the 'ret_1' column.
+    - feature_rank: Ranked feature values.
+    - target: Target variable.
+    - horizon: The horizon for the target variable (default is 1).
+    - window: The rolling window size for volatility calculation (default is 63).
+
+    Returns:
+    - low_vol: Boolean Series indicating low volatility regime.
+    - high_vol: Boolean Series indicating high volatility regime.
+    """
+    vol = data[f"ret_{horizon}"].rolling(window).std()
+    threshold = vol.quantile(0.5)
+    low_vol = vol <= threshold
+    high_vol = vol > threshold
+
+    # Volatility regime ICs
+    ic_low_vol = feature_rank[low_vol].corr(target[low_vol])
+    ic_high_vol = feature_rank[high_vol].corr(target[high_vol])
+
+    return ic_low_vol, ic_high_vol
+
+
+def sign_consistency(rolling_ic):
+    """
+    Evaluates the sign consistency of rolling IC values.
+
+    Parameters:
+    - rolling_ic: Series of rolling IC values.
+
+    Returns:
+    - sign_ratio: Fraction of windows matching overall direction.
+    - flip_rate: Fraction of transitions where sign changes.
+    - mean_run_length: Average length of consecutive same-sign runs.
+    """
+    sign = np.sign(rolling_ic).dropna()
+
+    if sign.empty:
+        return 0.0, 0.0, 0.0
+
+    # Sign ratio: fraction of windows matching overall direction
+    overall_ic = rolling_ic.mean()
+    if overall_ic > 0:
+        sign_ratio = (sign > 0).mean()
+    else:
+        sign_ratio = (sign < 0).mean()
+
+    # Flip rate: fraction of transitions where sign changes
+    flip_rate = sign.diff().ne(0).sum() / max(1, (sign.shape[0] - 1))
+
+    # Mean run length: average length of consecutive same-sign runs
+    groups = (sign != sign.shift()).cumsum()
+    run_lengths = sign.groupby(groups).size()
+    mean_run_length = run_lengths.mean()
+
+    return sign_ratio, flip_rate, mean_run_length
+
+
+def plot_rolling_ic(rolling_ic, feature_name, horizon):
+    """
+    Plots the rolling Information Coefficient (IC) for a given feature.
+
+    Parameters:
+    - rolling_ic: Series of rolling IC values.
+    - feature_name: Name of the feature being evaluated.
+    """
+    plt.figure(figsize=(12, 6))
+    plt.plot(rolling_ic.index, rolling_ic, label=f"Rolling IC: {feature_name}")
+    plt.axhline(0, color="red", linestyle="--", label="Zero Line")
+    plt.title(f"Rolling Information Coefficient (IC) for {feature_name}")
+    plt.xlabel("Date")
+    plt.ylabel("Rolling IC")
+    plt.legend()
+    plt.grid()
+    plt.tight_layout()
+    plt.savefig(f"data/figures/rolling_ic_{feature_name}_{horizon}.png")
+    plt.close()
+
+
+def feature_metrics(data, features, window=252, save_csv=True, plot=False):
     """
     Evaluates the rolling Information Coefficient (IC) and t-statistic for the given features.
 
@@ -21,126 +138,265 @@ def evaluate_rolling_ic_tstat(data, features, window=252, plot=False):
     - window: Rolling window size for IC calculation (default is 252 trading days).
     - plot: Boolean indicating whether to plot the results (default is False).
     """
-    IC_stats = []
-    target = data['ret_1'].shift(-1).rank()
+    feature_metrics = []
 
-    # Momentum regime
-    ma50 = data['ret_1'].rolling(50).mean()
-    ma200 = data['ret_1'].rolling(200).mean()
-    threshold = ma50 - ma200
-    low_momentum = threshold <= 0
-    high_momentum = threshold > 0
-
-    # Volatility regime
-    vol = data['ret_1'].rolling(63).std()  # 3-month realized vol
-    threshold = vol.quantile(0.5)
-    low_vol = vol <= threshold
-    high_vol = vol > threshold
-    
     for feature in features:
-        # Rank the feature
-        feature_rank = data[feature].rank()
+        for horizon in [1, 3, 5, 10, 20]:
+            target = data["ret_1"].shift(-horizon).rank()
 
-        # Overall IC (non-rolling, over entire dataset)
-        overall_ic = feature_rank.corr(target)
-        
-        # Calculate rolling IC
-        rolling_ic = feature_rank.rolling(window).corr(target)
-        rolling_tstat = calculate_rolling_tstat(rolling_ic, window)
+            # Rank the feature
+            feature_rank = data[feature].rank()
 
-        # Sign consistency
-        sign = np.sign(rolling_ic).dropna()
+            # Overall IC (non-rolling, over entire dataset)
+            overall_ic = feature_rank.corr(target)
 
-        if sign.empty:
-            sign_ratio = 0.0
-            flip_rate = 0.0
-            mean_run_length = 0.0
-        else:
-            # sign ratio: fraction of windows matching overall direction
-            if overall_ic > 0:
-                sign_ratio = (sign > 0).mean()
-            else:
-                sign_ratio = (sign < 0).mean()
+            # Calculate rolling IC
+            rolling_ic = feature_rank.rolling(window).corr(target)
+            # rolling_tstat = calculate_rolling_tstat(rolling_ic, window)
 
-            # flip rate: fraction of transitions where sign changes
-            flip_rate = sign.diff().ne(0).sum() / max(1, (sign.shape[0] - 1))
+            # Sign consistency
+            sign_ratio, flip_rate, mean_run_length = sign_consistency(rolling_ic)
 
-            # mean run length: average length of consecutive same-sign runs
-            groups = (sign != sign.shift()).cumsum()
-            run_lengths = sign.groupby(groups).size()
-            mean_run_length = run_lengths.mean()
+            # Regime analysis
+            ic_low_momentum, ic_high_momentum = momentum_regime(
+                data, feature_rank, target, horizon=horizon
+            )
+            ic_low_vol, ic_high_vol = volatility_regime(
+                data, feature_rank, target, horizon=horizon
+            )
 
-        # Momentum regime ICs
-        ic_low_momentum = feature_rank[low_momentum].corr(target[low_momentum])
-        ic_high_momentum = feature_rank[high_momentum].corr(target[high_momentum])
+            # Summary stats
+            feature_metrics.append(
+                {
+                    "feature": feature,
+                    "horizon": horizon,
+                    "overall_ic": overall_ic,
+                    "sign_ratio": sign_ratio,
+                    "flip_rate": flip_rate,
+                    "mean_run_length": mean_run_length,
+                    "mean_ic": rolling_ic.mean(),
+                    "std_ic": rolling_ic.std(),
+                    "min_ic": rolling_ic.min(),
+                    "max_ic": rolling_ic.max(),
+                    "icir": (
+                        rolling_ic.mean() / rolling_ic.std()
+                        if rolling_ic.std() != 0
+                        else None
+                    ),
+                    # "mean_tstat": rolling_tstat.mean(),
+                    # "std_tstat": rolling_tstat.std(),
+                    # "min_tstat": rolling_tstat.min(),
+                    # "max_tstat": rolling_tstat.max(),
+                    "ic_low_momentum": ic_low_momentum,
+                    "ic_high_momentum": ic_high_momentum,
+                    "ic_low_vol": ic_low_vol,
+                    "ic_high_vol": ic_high_vol,
+                }
+            )
 
-        # Volatility regime ICs
-        ic_low_vol = feature_rank[low_vol].corr(target[low_vol])
-        ic_high_vol = feature_rank[high_vol].corr(target[high_vol])
-
-        # Plotting
-        if plot:
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-
-            # IC plot (top)
-            rolling_ic.plot(ax=ax1)
-            ax1.set_title(f'Rolling IC for {feature} (window={window})')
-            ax1.set_ylabel('IC (Spearman Correlation)')
-            ax1.set_xlabel('Date')
-            ax1.grid(True)
-
-            # T-stat plot (bottom)
-            rolling_tstat.plot(ax=ax2, color='orange')
-            ax2.set_title(f'Rolling t-stat for {feature} (window={window})')
-            ax2.set_ylabel('t-statistic')
-            ax2.set_xlabel('Date')
-            ax2.grid(True)
-
-            plt.tight_layout()
-            plt.savefig(f'data/rollingIC_tStat/rolling_ic_tstat_{feature}.png')
-            plt.close()
-
-        # Summary stats
-        IC_stats.append({
-            "feature": feature,
-            "overall_ic": overall_ic,
-            "sign_ratio": sign_ratio,
-            "flip_rate": flip_rate,
-            "mean_run_length": mean_run_length,
-            "mean_ic": rolling_ic.mean(),
-            "std_ic": rolling_ic.std(),
-            "min_ic": rolling_ic.min(),
-            "max_ic": rolling_ic.max(),
-            "icir": rolling_ic.mean() / rolling_ic.std() if rolling_ic.std() != 0 else None,
-            "mean_tstat": rolling_tstat.mean(),
-            "std_tstat": rolling_tstat.std(),
-            "min_tstat": rolling_tstat.min(),
-            "max_tstat": rolling_tstat.max(),
-            "ic_low_momentum": ic_low_momentum,
-            "ic_high_momentum": ic_high_momentum,
-            "ic_low_vol": ic_low_vol,
-            "ic_high_vol": ic_high_vol
-        })
-    
     # Evaluate feature importance based on statistics
-    IC_stats_df = pd.DataFrame(IC_stats)
-    IC_stats_df['mean_ic_normalized'] = IC_stats_df['mean_ic'].abs() / IC_stats_df['mean_ic'].abs().max()
-    IC_stats_df['icir_normalized'] = np.sign(IC_stats_df['mean_ic']) * IC_stats_df['icir'] / IC_stats_df['icir'].abs().max()
-    IC_stats_df['sign_ratio_normalized'] = (IC_stats_df['sign_ratio'] - IC_stats_df['sign_ratio'].min()) / (IC_stats_df['sign_ratio'].max() - IC_stats_df['sign_ratio'].min()) if IC_stats_df['sign_ratio'].max() != IC_stats_df['sign_ratio'].min() else 0
-    IC_stats_df['mean_run_length_normalized'] = (IC_stats_df['mean_run_length'] - IC_stats_df['mean_run_length'].min()) / (IC_stats_df['mean_run_length'].max() - IC_stats_df['mean_run_length'].min()) if IC_stats_df['mean_run_length'].max() != IC_stats_df['mean_run_length'].min() else 0
-    IC_stats_df['flip_rate_normalized'] = (IC_stats_df['flip_rate'] - IC_stats_df['flip_rate'].min()) / (IC_stats_df['flip_rate'].max() - IC_stats_df['flip_rate'].min()) if IC_stats_df['flip_rate'].max() != IC_stats_df['flip_rate'].min() else 0
-    IC_stats_df['score_regime'] = 1/(1+abs(IC_stats_df['ic_low_momentum'] - IC_stats_df['ic_high_momentum']) + abs(IC_stats_df['ic_low_vol'] - IC_stats_df['ic_high_vol']))
-    IC_stats_df['score_regime_normalized'] = (IC_stats_df['score_regime'] - IC_stats_df['score_regime'].min()) / (IC_stats_df['score_regime'].max() - IC_stats_df['score_regime'].min()) if IC_stats_df['score_regime'].max() != IC_stats_df['score_regime'].min() else 0
-    IC_stats_df['penalty_regime'] = abs(IC_stats_df['ic_low_momentum'] - IC_stats_df['ic_high_momentum']) + abs(IC_stats_df['ic_low_vol'] - IC_stats_df['ic_high_vol'])
-    IC_stats_df['penalty_regime_normalized'] = (IC_stats_df['penalty_regime'] - IC_stats_df['penalty_regime'].min()) / (IC_stats_df['penalty_regime'].max() - IC_stats_df['penalty_regime'].min()) if IC_stats_df['penalty_regime'].max() != IC_stats_df['penalty_regime'].min() else 0
-    IC_stats_df['penalty'] = IC_stats_df['flip_rate_normalized'] + IC_stats_df['penalty_regime_normalized']
-
-    IC_stats_df['importance_score'] = (
-        abs(IC_stats_df['mean_ic_normalized']) * 0.35 +
-        abs(IC_stats_df['icir_normalized']) * 0.3 +
-        IC_stats_df['sign_ratio_normalized'] * 0.15 +
-        IC_stats_df['mean_run_length_normalized'] * 0.1 + IC_stats_df['score_regime_normalized'] * 0.1 - IC_stats_df['penalty'] * 0.1
-    )
+    feature_metrics_df = pd.DataFrame(feature_metrics)
 
     # Save summary stats to CSV
-    IC_stats_df.to_csv("data/feature_ic_stats.csv", index=False, float_format="%.4f")
+    if save_csv:
+        feature_metrics_df.to_csv(
+            "data/feature_metrics_horizon.csv", index=False, float_format="%.5f"
+        )
+
+    return feature_metrics_df
+
+
+def check_feature_correlation(data, features, threshold=0.8):
+    """
+    Checks correlation between features to identify redundancy.
+
+    Parameters:
+    - data: DataFrame with features
+    - features: List of feature names
+    - threshold: Correlation threshold for redundancy (default 0.8)
+
+    Returns:
+    - corr_matrix: Feature correlation matrix
+    - redundant_pairs: List of (feature1, feature2, correlation) tuples
+    """
+    # Compute correlation matrix
+    feature_data = data[features]
+    corr_matrix = feature_data.corr()
+
+    # Plot heatmap
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="Blues", center=0)
+    plt.title("Feature Correlation Matrix")
+    plt.tight_layout()
+    plt.savefig("data/figures/feature_correlation_heatmap.png")
+    plt.close()
+
+    # Find redundant pairs
+    redundant_pairs = []
+    for i in range(len(corr_matrix.columns)):
+        for j in range(i + 1, len(corr_matrix.columns)):
+            corr_val = corr_matrix.iloc[i, j]
+            if abs(corr_val) > threshold:
+                feat1 = corr_matrix.columns[i]
+                feat2 = corr_matrix.columns[j]
+                redundant_pairs.append((feat1, feat2, corr_val))
+
+    # Sort by absolute correlation (highest first)
+    redundant_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+
+    return corr_matrix, redundant_pairs
+
+
+def first_level_feature_selection(
+    feature_metrics_df,
+    mean_ic_threshold=0.015,
+    absmax_ic_threshold=0.05,
+    overall_ic_threshold=0.015,
+):
+    """
+    Performs first-level feature selection based on mean IC and max absolute IC across horizons.
+
+    Parameters:
+    - feature_metrics_df: DataFrame containing feature metrics
+    - mean_ic_threshold: Threshold for mean IC across horizons (default 0.015)
+    - absmax_ic_threshold: Threshold for max absolute IC across horizons (default 0.05)
+    - overall_ic_threshold: Threshold for overall IC (default 0.015)
+
+    Returns:
+    - selected_features: List of features that meet the selection criteria
+    """
+    summary = (
+        feature_metrics_df.groupby("feature")
+        .agg(
+            mean_ic_horizons=("mean_ic", "mean"),
+            mean_ic_absmax_horizons=("mean_ic", lambda s: s.abs().max()),
+            std_ic_horizons=("std_ic", "std"),
+            overall_ic_horizons=("overall_ic", "mean"),
+        )
+        .reset_index()
+    )
+
+    # First-level selection: keep features with the following conditions:
+    # - Abs-Mean IC across horizons > mean_ic_threshold
+    # - Max absolute IC across horizons > absmax_ic_threshold
+    selected_features = summary[
+        (summary["mean_ic_horizons"].abs() > mean_ic_threshold)
+        & (summary["mean_ic_absmax_horizons"] > absmax_ic_threshold)
+        & (summary["overall_ic_horizons"].abs() > overall_ic_threshold)
+    ]["feature"].tolist()
+
+    return selected_features, summary
+
+
+def remove_redundant_features(selected_features, summary, redundant_pairs):
+    """
+    Removes redundant features based on correlation and mean IC across horizons.
+
+    Parameters:
+    - selected_features: List of initially selected features
+    - summary: DataFrame containing feature metrics summary
+    - redundant_pairs: List of (feature1, feature2, correlation) tuples
+
+    Returns:
+    - selected_features: Updated list of features after removing redundancies
+    """
+    for pair in redundant_pairs:
+        print(f"Redundant pair: {pair[0]} and {pair[1]} with correlation {pair[2]:.2f}")
+
+        # Remove the feature with the lower mean IC across horizons
+        if pair[0] not in selected_features or pair[1] not in selected_features:
+            continue
+
+        absmax_ic_0 = summary.loc[
+            summary["feature"] == pair[0], "mean_ic_absmax_horizons"
+        ].values[0]
+        absmax_ic_1 = summary.loc[
+            summary["feature"] == pair[1], "mean_ic_absmax_horizons"
+        ].values[0]
+
+        if absmax_ic_0 < absmax_ic_1:
+            selected_features.remove(pair[0])
+            print(f"Removed {pair[0]} due to lower abs-max IC.")
+        else:
+            selected_features.remove(pair[1])
+            print(f"Removed {pair[1]} due to lower abs-max IC.")
+
+    return selected_features
+
+
+def metrics_scoring(IC_stats_df):
+    """
+    Computes a composite importance score for each feature based on various metrics.
+    To-be finalized with multi-horizon analysis.
+    """
+    IC_stats_df["mean_ic_normalized"] = (
+        IC_stats_df["mean_ic"].abs() / IC_stats_df["mean_ic"].abs().max()
+    )
+    IC_stats_df["icir_normalized"] = (
+        np.sign(IC_stats_df["mean_ic"])
+        * IC_stats_df["icir"]
+        / IC_stats_df["icir"].abs().max()
+    )
+    IC_stats_df["sign_ratio_normalized"] = (
+        (IC_stats_df["sign_ratio"] - IC_stats_df["sign_ratio"].min())
+        / (IC_stats_df["sign_ratio"].max() - IC_stats_df["sign_ratio"].min())
+        if IC_stats_df["sign_ratio"].max() != IC_stats_df["sign_ratio"].min()
+        else 0
+    )
+    IC_stats_df["mean_run_length_normalized"] = (
+        (IC_stats_df["mean_run_length"] - IC_stats_df["mean_run_length"].min())
+        / (IC_stats_df["mean_run_length"].max() - IC_stats_df["mean_run_length"].min())
+        if IC_stats_df["mean_run_length"].max() != IC_stats_df["mean_run_length"].min()
+        else 0
+    )
+    IC_stats_df["flip_rate_normalized"] = (
+        (IC_stats_df["flip_rate"] - IC_stats_df["flip_rate"].min())
+        / (IC_stats_df["flip_rate"].max() - IC_stats_df["flip_rate"].min())
+        if IC_stats_df["flip_rate"].max() != IC_stats_df["flip_rate"].min()
+        else 0
+    )
+    IC_stats_df["score_regime"] = 1 / (
+        1
+        + abs(IC_stats_df["ic_low_momentum"] - IC_stats_df["ic_high_momentum"])
+        + abs(IC_stats_df["ic_low_vol"] - IC_stats_df["ic_high_vol"])
+    )
+    IC_stats_df["score_regime_normalized"] = (
+        (IC_stats_df["score_regime"] - IC_stats_df["score_regime"].min())
+        / (IC_stats_df["score_regime"].max() - IC_stats_df["score_regime"].min())
+        if IC_stats_df["score_regime"].max() != IC_stats_df["score_regime"].min()
+        else 0
+    )
+    IC_stats_df["penalty_regime"] = abs(
+        IC_stats_df["ic_low_momentum"] - IC_stats_df["ic_high_momentum"]
+    ) + abs(IC_stats_df["ic_low_vol"] - IC_stats_df["ic_high_vol"])
+    IC_stats_df["penalty_regime_normalized"] = (
+        (IC_stats_df["penalty_regime"] - IC_stats_df["penalty_regime"].min())
+        / (IC_stats_df["penalty_regime"].max() - IC_stats_df["penalty_regime"].min())
+        if IC_stats_df["penalty_regime"].max() != IC_stats_df["penalty_regime"].min()
+        else 0
+    )
+    IC_stats_df["penalty"] = (
+        IC_stats_df["flip_rate_normalized"] + IC_stats_df["penalty_regime_normalized"]
+    )
+    IC_stats_df["mean_tstat_normalized"] = (
+        (IC_stats_df["mean_tstat"] - IC_stats_df["mean_tstat"].min())
+        / (IC_stats_df["mean_tstat"].max() - IC_stats_df["mean_tstat"].min() + 1e-8)
+        if IC_stats_df["mean_tstat"].max() != IC_stats_df["mean_tstat"].min()
+        else 0
+    )
+
+    # Final importance score calculation
+    IC_stats_df["importance_score"] = (
+        abs(IC_stats_df["mean_ic_normalized"])
+        * 0.35  # Mean IC is the most important metric, for predictive power
+        + abs(IC_stats_df["icir_normalized"])
+        * 0.3  # ICIR, which measures the risk-adjusted predictive power of the feature
+        + IC_stats_df["mean_tstat_normalized"]
+        * 0.2  # Statistical significance of the IC
+        + IC_stats_df["sign_ratio_normalized"]
+        * 0.15  # Sign consistency, temporal stability
+        + IC_stats_df["mean_run_length_normalized"]
+        * 0.1  # Mean run length, also temporal robustness
+        + IC_stats_df["score_regime_normalized"] * 0.1  # Regime consistency
+        - IC_stats_df["penalty"] * 0.1  # Penalty for flip rate and regime inconsistency
+    )

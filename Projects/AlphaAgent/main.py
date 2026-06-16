@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 import seaborn as sns
+
 sns.set()
 import matplotlib.pyplot as plt
 
@@ -20,7 +21,7 @@ import core.data_loader as data_loader
 import core.feature_evaluator as feature_evaluator
 from core.feature_generator import FeatureGenerator
 
-'''
+"""
 This is the main file of the project AlphaAgent, which will serve as a toy-model for a multi-layer construction of alpha signal search engine.
 The main idea contains the following layers:
 - Data layer: this layer will be responsible for loading and preprocessing the data, including feature engineering and selection.
@@ -29,7 +30,8 @@ The main idea contains the following layers:
 - Model layer: this layer will be responsible for training and evaluating the models.
 - LLM-layer: this layer will be responsible for generating insights and explanations based on the models and alpha signals.
 - Graph-layer: this layer will construct a metric-graph of alpha signals.
-'''
+"""
+
 
 def main():
     #### Load input data, specifically the S&P 500 index data from Yahoo Finance
@@ -37,20 +39,47 @@ def main():
     # S&P 500 data will be less noisy than individual stock data, and will provide a good benchmark for the toy model as starting point.
     # ETFs like SPY or VOO can also be used as alternatives to the S&P 500 index data.
     # For alternative data sources, consider using Quandl or Alpha Vantage APIs, which provide a wide range of financial data.
-    data = data_loader.load_yahoo_data('SPY', start='2000-01-01', end='2004-01-01')
-    data.columns = ['Close', 'High', 'Low', 'Open', 'Volume']
+    data = data_loader.load_yahoo_data("SPY", start="2000-01-01", end="2004-01-01")
+    data.columns = ["Close", "High", "Low", "Open", "Volume"]
 
     # Generate features using the FeatureGenerator class
     feature_generator = FeatureGenerator()
     data = feature_generator.generate(data)
 
     # Save the processed data to a CSV file for further analysis and modeling
-    data.to_csv('data/processed_data.csv', index=True)
+    data.to_csv("data/processed_data.csv", index=True)
 
-    # Rolling IC calculation
-    features = data.columns.drop(['Close', 'High', 'Low', 'Open', 'Volume', 'target'])
-    feature_evaluator.evaluate_rolling_ic_tstat(data, features)  # Call the revised function
-        
+    # Feature metrics evaluation
+    features = data.columns.drop(["Close", "High", "Low", "Open", "Volume", "target"])
+    feature_metrics_df = feature_evaluator.feature_metrics(
+        data, features, 252, True, False
+    )
 
-if __name__ == '__main__':
+    # First level feature selection based on the highest absolute IC values for each feature across different horizons
+    # idx = feature_metrics_df.groupby("feature")["overall_ic"].apply(
+    #     lambda s: s.abs().idxmax()
+    # )
+    # summary = feature_metrics_df.loc[idx].reset_index(drop=True)
+    selected_features, summary = feature_evaluator.first_level_feature_selection(
+        feature_metrics_df,
+        mean_ic_threshold=0.015,
+        absmax_ic_threshold=0.05,
+        overall_ic_threshold=0.015,
+    )
+
+    summary.to_csv("data/feature_metrics_summary.csv", index=False, float_format="%.5f")
+
+    # Check feature correlation and identify redundant features
+    corr_matrix, redundant_pairs = feature_evaluator.check_feature_correlation(
+        data, selected_features
+    )
+
+    selected_features = feature_evaluator.remove_redundant_features(
+        selected_features, summary, redundant_pairs
+    )
+
+    print(f"Selected features after correlation check: {selected_features}")
+
+
+if __name__ == "__main__":
     main()
