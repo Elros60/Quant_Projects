@@ -1,0 +1,5 @@
+horizon,selected_features
+1,"['ema_3', 'ret_5', 'vol_20', 'ret_10', 'vol_60']"
+5,"['ema_3', 'vol_60', 'volume_zscore_60', 'vol_20']"
+10,"['ema_3', 'ret_1', 'vol_20', 'volume_zscore_120', 'vol_60']"
+20,"['ema_3', 'volume_ratio_120', 'ret_1']"

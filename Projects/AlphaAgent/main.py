@@ -43,42 +43,70 @@ def main():
     data.columns = ["Close", "High", "Low", "Open", "Volume"]
 
     # Generate features using the FeatureGenerator class
-    feature_generator = FeatureGenerator()
+    horizons = [1, 5, 10, 20]
+    momentum_periods = [1, 3, 5, 10, 15, 20]
+    vol_periods = [20, 60, 120]
+
+    mean_ic_threshold = 0.02
+    absmax_ic_threshold = 0.03
+    overall_ic_threshold = 0.015
+
+    feature_generator = FeatureGenerator(momentum_periods, vol_periods)
     data = feature_generator.generate(data)
 
     # Save the processed data to a CSV file for further analysis and modeling
     data.to_csv("data/processed_data.csv", index=True)
 
     # Feature metrics evaluation
-    features = data.columns.drop(["Close", "High", "Low", "Open", "Volume", "target"])
+    features = data.columns.drop(["Close", "High", "Low", "Open", "Volume"])
     feature_metrics_df = feature_evaluator.feature_metrics(
-        data, features, 252, True, False
+        data, features, horizons, 63, True, True
     )
 
     # First level feature selection based on the highest absolute IC values for each feature across different horizons
-    # idx = feature_metrics_df.groupby("feature")["overall_ic"].apply(
-    #     lambda s: s.abs().idxmax()
-    # )
-    # summary = feature_metrics_df.loc[idx].reset_index(drop=True)
-    selected_features, summary = feature_evaluator.first_level_feature_selection(
+    selected_features_per_horizon = feature_evaluator.first_level_feature_selection(
         feature_metrics_df,
-        mean_ic_threshold=0.015,
-        absmax_ic_threshold=0.05,
-        overall_ic_threshold=0.015,
+        horizons=horizons,
+        mean_ic_threshold=mean_ic_threshold,
+        absmax_ic_threshold=absmax_ic_threshold,
+        overall_ic_threshold=overall_ic_threshold,
     )
 
-    summary.to_csv("data/feature_metrics_summary.csv", index=False, float_format="%.5f")
+    selected_features_df = pd.DataFrame(selected_features_per_horizon)
+    selected_features_df.to_csv(
+        "data/feature_metrics_summary.csv", index=False, float_format="%.5f"
+    )
 
     # Check feature correlation and identify redundant features
-    corr_matrix, redundant_pairs = feature_evaluator.check_feature_correlation(
-        data, selected_features
-    )
+    selected_features_nocorr = []
+    for row in selected_features_df.itertuples(index=False):
 
-    selected_features = feature_evaluator.remove_redundant_features(
-        selected_features, summary, redundant_pairs
-    )
+        print(f"Selected features for horizon {row.horizon}: {row.selected_features}")
+        corr_matrix, redundant_pairs = feature_evaluator.check_feature_correlation(
+            data, row.selected_features, threshold=0.9
+        )
 
-    print(f"Selected features after correlation check: {selected_features}")
+        # Plot heatmap
+        plt.figure(figsize=(12, 10))
+        sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="Blues", center=0)
+        plt.title(f"Feature Correlation Matrix for horizon {row.horizon}")
+        plt.tight_layout()
+        plt.savefig(f"data/figures/feature_correlation_heatmap_{row.horizon}.png")
+        plt.close()
+
+        selected_features = feature_evaluator.remove_redundant_features(
+            row.selected_features, feature_metrics_df, redundant_pairs, row.horizon
+        )
+
+        selected_features_nocorr.append(
+            {"horizon": row.horizon, "selected_features": selected_features}
+        )
+        print(f"Selected features after correlation check: {selected_features}")
+
+    selected_features_nocorr_df = pd.DataFrame(selected_features_nocorr)
+    selected_features_nocorr_df.to_csv(
+        "data/feature_metrics_summary_nocorr.csv", index=False, float_format="%.5f"
+    )
 
 
 if __name__ == "__main__":
